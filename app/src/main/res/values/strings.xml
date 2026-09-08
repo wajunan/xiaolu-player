@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">小鹿播放增强器</string>
+    <string name="home_recent">最近播放</string>
+    <string name="home_local">本地视频</string>
+    <string name="home_open">打开视频</string>
+    <string name="home_settings">设置</string>
+    <string name="home_recent_empty">还没有播放记录</string>
+    <string name="home_local_empty">未找到本地视频</string>
+    <string name="open_local">选择本地视频文件</string>
+    <string name="open_network">网络播放（URL / M3U8 / DASH）</string>
+    <string name="open_url_hint">粘贴视频 URL（mp4 / m3u8 / mpd …）</string>
+    <string name="open_play">开始播放</string>
+    <string name="setting_default_speed">默认倍速</string>
+    <string name="setting_remember_speed">记住上次倍速</string>
+    <string name="setting_auto_resume">自动恢复上次播放位置</string>
+    <string name="setting_auto_pip">按 Home 键自动进入画中画</string>
+    <string name="setting_custom_speed">自定义倍速</string>
+    <string name="about_title">关于与合规说明</string>
+    <string name="speed">倍速</string>
+    <string name="quality">画质</string>
+    <string name="subtitle">字幕</string>
+    <string name="audio">音轨</string>
+    <string name="aspect">画面比例</string>
+    <string name="auto">自动</string>
+    <string name="off">关闭</string>
+    <string name="external_subtitle">外部字幕文件…</string>
+    <string name="pip">画中画</string>
+    <string name="back">返回</string>
+    <string name="error_title">播放失败</string>
+    <string name="drh_title">DRM 说明</string>
+</resources>
