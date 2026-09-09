@@ -11,3 +11,7 @@ opencode.json
 .kotlin/
 /PanPlayer-debug.apk
 *.apk
+windows/**/bin/
+windows/**/obj/
+windows/publish/
+windows/*.zip

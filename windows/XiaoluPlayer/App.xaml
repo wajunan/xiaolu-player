@@ -1,0 +1,78 @@
+﻿<Application x:Class="XiaoluPlayer.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:XiaoluPlayer">
+    <Application.Resources>
+        <Color x:Key="BrandDeep">#2E4AAE</Color>
+        <Color x:Key="Brand">#3060C0</Color>
+        <Color x:Key="BrandBright">#4890F0</Color>
+        <Color x:Key="BrandSky">#7EB8F5</Color>
+        <Color x:Key="Accent">#F6A81C</Color>
+        <Color x:Key="BgTop">#F2F7FD</Color>
+        <Color x:Key="BgBottom">#D9E7F9</Color>
+        <Color x:Key="Ink">#16233F</Color>
+        <Color x:Key="InkSoft">#5E6D88</Color>
+        <SolidColorBrush x:Key="BrandBrush" Color="{StaticResource Brand}"/>
+        <SolidColorBrush x:Key="BrandDeepBrush" Color="{StaticResource BrandDeep}"/>
+        <SolidColorBrush x:Key="InkBrush" Color="{StaticResource Ink}"/>
+        <SolidColorBrush x:Key="InkSoftBrush" Color="{StaticResource InkSoft}"/>
+        <LinearGradientBrush x:Key="PageBg" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="{StaticResource BgTop}" Offset="0"/>
+            <GradientStop Color="{StaticResource BgBottom}" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="HeroBg" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="{StaticResource BrandDeep}" Offset="0"/>
+            <GradientStop Color="{StaticResource Brand}" Offset="0.55"/>
+            <GradientStop Color="{StaticResource BrandBright}" Offset="1"/>
+        </LinearGradientBrush>
+        <Style x:Key="CardBorder" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="CornerRadius" Value="20"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.12" Color="#3060C0"/>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="GhostCard" TargetType="Border">
+            <Setter Property="Background" Value="#E4EDFA"/>
+            <Setter Property="CornerRadius" Value="13"/>
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource BrandBrush}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Padding" Value="22,9"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="10"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource BrandDeepBrush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.5"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="BorderBrush" Value="#C9D6EA"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="8,4"/>
+        </Style>
+    </Application.Resources>
+</Application>
