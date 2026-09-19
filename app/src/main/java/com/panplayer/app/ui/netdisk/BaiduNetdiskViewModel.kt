@@ -8,6 +8,7 @@ import com.panplayer.app.baidu.BaiduSession
 import com.panplayer.app.baidu.PanFile
 import com.panplayer.app.data.AppServices
 import com.panplayer.app.util.Diag
+import com.panplayer.app.util.Format
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,7 +66,10 @@ class BaiduNetdiskViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val list = withContext(Dispatchers.IO) { BaiduPanClient.list(s, dirPath) }
                 _files.value = list.sortedWith(
-                    compareByDescending<PanFile> { it.isDir }.thenBy { it.name.lowercase() }
+                    Comparator { a, b ->
+                        if (a.isDir != b.isDir) (if (a.isDir) -1 else 1)
+                        else Format.naturalCompare(a.name, b.name)
+                    }
                 )
             } catch (e: Exception) {
                 _error.value = e.message ?: "加载失败"

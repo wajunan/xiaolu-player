@@ -15,3 +15,10 @@ windows/**/bin/
 windows/**/obj/
 windows/publish/
 windows/*.zip
+
+.dotnet/
+windows/_build_out/
+windows/*-win-x64/
+windows/*-win-x86/
+windows/*-linux-x64/
+.opencode/

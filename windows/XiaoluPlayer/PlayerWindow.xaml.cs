@@ -12,13 +12,30 @@ public partial class PlayerWindow : Window
     readonly DispatcherTimer uiTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
     readonly DispatcherTimer hideTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     readonly DispatcherTimer saveTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    readonly DispatcherTimer inputTimer = new() { Interval = TimeSpan.FromMilliseconds(80) };
+    Point lastPointer = new(double.NaN, double.NaN);
+    bool lastButtonDown;
+    int pendingPressAt;
+    int wpfClickAt = -100000;
     bool dragging;
     bool started;
     bool refreshed;
     bool fullscreen;
     bool useProxy;
+    bool userWantsPlay = true;
     string proxySession = "";
+    int playAttempt;
     long lastSavedPos;
+    long lastTimeMs;
+
+    // 供无界面自测判断窗口是否真的在播
+    public bool PlaybackStarted => started;
+    public long LastTimeMs => lastTimeMs;
+    public bool BarsShown => TopBar.Visibility == Visibility.Visible;
+    public System.Windows.Point CenterOnScreen() => PointToScreen(new Point(ActualWidth / 2, ActualHeight / 2));
+
+    /// <summary>自测窗口不该往播放记录里写数据。</summary>
+    public static bool RecordingEnabled = true;
 
     public PlayerWindow(PlayRequest request)
     {
@@ -48,7 +65,6 @@ public partial class PlayerWindow : Window
         hideTimer.Tick += (s, e) => { hideTimer.Stop(); HideBars(); };
         saveTimer.Tick += (s, e) => SaveRecord();
         Closed += (s, e) => Cleanup();
-        KeyDown += OnKey;
         Loaded += (s, e) => StartPlayback();
     }
 
@@ -58,31 +74,39 @@ public partial class PlayerWindow : Window
         {
             var lib = App.LibVLC ?? throw new Exception("播放器未初始化");
             mp = new MediaPlayer(lib);
-            mp.Playing += (s, e) => Dispatcher.Invoke(() =>
+            // libvlc 的事件在它自己的线程上触发，这里必须用 BeginInvoke：Invoke 会阻塞该线程，
+            // 而 UI 线程可能正卡在 mp.Time/mp.Length 上，互相等待就变成"加载中"且界面失去响应。
+            mp.Playing += (s, e) => Dispatcher.BeginInvoke(() =>
             {
+                userWantsPlay = true;
                 PlayBtn.Content = "⏸";
+                LoadingText.Visibility = Visibility.Collapsed;
                 if (!started)
                 {
                     started = true;
-                    if (req.StartMs > 0) { try { mp!.Time = req.StartMs; } catch { } }
+                    Diag.Log("playing len=" + mp!.Length + " startMs=" + req.StartMs);
+                    if (req.StartMs > 0) { try { mp.Time = req.StartMs; } catch { } }
                     RefreshTracks();
                 }
                 ResetHideTimer();
             });
-            mp.Paused += (s, e) => Dispatcher.Invoke(() => { PlayBtn.Content = "▶"; ShowBars(); });
-            mp.EndReached += (s, e) => Dispatcher.Invoke(() => { PlayBtn.Content = "▶"; ShowBars(); SaveRecord(); });
-            mp.EncounteredError += (s, e) => Dispatcher.Invoke(OnError);
+            mp.Paused += (s, e) => Dispatcher.BeginInvoke(() => { userWantsPlay = false; PlayBtn.Content = "▶"; ShowBars(); });
+            mp.EndReached += (s, e) => Dispatcher.BeginInvoke(() => { userWantsPlay = false; PlayBtn.Content = "▶"; ShowBars(); SaveRecord(); });
+            mp.EncounteredError += (s, e) => Dispatcher.BeginInvoke(OnError);
             VideoView.MediaPlayer = mp;
             PlayMedia(req.Uri);
             uiTimer.Start();
             saveTimer.Start();
+            inputTimer.Tick += InputTick;
+            inputTimer.Start();
+            InstallKeyboardHook();
         }
         catch (Exception ex) { ShowError("启动播放失败：" + ex.Message); }
     }
 
     List<string> MediaOptions()
     {
-        var opts = new List<string> { ":network-caching=2500" };
+        var opts = new List<string> { ":network-caching=" + (useProxy ? "6000" : "4000") };
         if (useProxy) return opts;
         if (req.UserAgent.Length > 0) opts.Add(":http-user-agent=" + req.UserAgent);
         if (req.Referer.Length > 0) opts.Add(":http-referrer=" + req.Referer);
@@ -94,7 +118,9 @@ public partial class PlayerWindow : Window
     {
         if (mp == null || App.LibVLC == null) return;
         started = false;
-        if (req.BaiduPath.Length > 0)
+        userWantsPlay = true;
+        LoadingText.Visibility = Visibility.Visible;
+        if (req.BaiduPath.Length > 0 && url.Contains("type=M3U8_AUTO_"))
         {
             useProxy = true;
             PlayViaProxy();
@@ -112,23 +138,40 @@ public partial class PlayerWindow : Window
         if (req.Cookies.Length == 0 && Store.Config.cookies.Length > 0)
             req.Cookies = Store.Config.cookies;
         if (req.Cookies.Length == 0) { ShowError("需要先登录百度网盘"); return; }
-        string type = req.StreamType.Length > 0 ? req.StreamType : "M3U8_AUTO_480";
+        LoadingText.Visibility = Visibility.Visible;
+        int attempt = ++playAttempt;
         Task.Run(() =>
         {
+            long t0 = Environment.TickCount64;
             try
             {
-                var pl = BaiduClient.FetchPlaylist(req.Cookies, req.BaiduPath, type);
+                Diag.Log("play start path=" + req.BaiduPath + " type=" + req.StreamType);
+                var pl = BaiduClient.FetchPlaylistDowngrade(req.Cookies, req.BaiduPath, req.StreamType, req.Qualities);
                 var h = BaiduClient.StreamHeaders(req.Cookies);
-                Dispatcher.Invoke(() =>
+                Diag.Log("play playlist fetched in " + (Environment.TickCount64 - t0) + "ms segs=" + pl.segs.Count);
+                // 连点画质时旧任务不能把新任务刚建的会话拆掉
+                if (attempt != Volatile.Read(ref playAttempt)) { Diag.Log("play attempt " + attempt + " superseded"); return; }
+                if (proxySession.Length > 0) HlsProxy.Release(proxySession);
+                string local = HlsProxy.Serve(pl.segs, req.Cookies, h["User-Agent"], h["Referer"]);
+                proxySession = local.Substring(local.IndexOf("session=") + 8);
+                long tw = Environment.TickCount64;
+                HlsProxy.Warmup(proxySession, 3);
+                Diag.Log("play warmup in " + (Environment.TickCount64 - tw) + "ms");
+                Dispatcher.BeginInvoke(() =>
                 {
                     try
                     {
-                        if (proxySession.Length > 0) HlsProxy.Release(proxySession);
-                        string local = HlsProxy.Serve(pl.segs, req.Cookies, h["User-Agent"], h["Referer"]);
-                        proxySession = local.Substring(local.IndexOf("session=") + 8);
+                        if (attempt != playAttempt) return;
+                        if (pl.type != req.StreamType)
+                        {
+                            req.StreamType = pl.type;
+                            int idx = req.Qualities.FindIndex(q => q.Type == pl.type);
+                            if (idx >= 0) QualityBox.SelectedIndex = idx;
+                        }
                         var media = new Media(App.LibVLC!, local, FromType.FromLocation, MediaOptions().ToArray());
                         mp!.Play(media);
                         media.Dispose();
+                        userWantsPlay = true;
                         ErrorText.Visibility = Visibility.Collapsed;
                     }
                     catch (Exception ex) { ShowError("播放失败：" + ex.Message); }
@@ -136,6 +179,7 @@ public partial class PlayerWindow : Window
             }
             catch (Exception ex)
             {
+                Diag.Log("play FAIL after " + (Environment.TickCount64 - t0) + "ms: " + ex.Message);
                 Dispatcher.Invoke(() => ShowError("获取播放地址失败：" + ex.Message));
             }
         });
@@ -143,43 +187,16 @@ public partial class PlayerWindow : Window
 
     void OnError()
     {
-        if (!refreshed && req.FsId >= 0 && req.BaiduPath.Length > 0 && Store.Config.cookies.Length > 0)
+        if (!refreshed && req.BaiduPath.Length > 0 && Store.Config.cookies.Length > 0)
         {
             refreshed = true;
             long pos = 0;
             try { pos = mp?.Time ?? 0; } catch { }
-            Task.Run(() =>
-            {
-                try
-                {
-                    if (req.BaiduPath.Length > 0)
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            req.Uri = "";
-                            req.StartMs = pos;
-                            started = false;
-                            ErrorText.Visibility = Visibility.Collapsed;
-                            PlayViaProxy();
-                        });
-                        return;
-                    }
-                    var link = BaiduClient.GetStreamLink(Store.Config.cookies, req.BaiduPath);
-                    Dispatcher.Invoke(() =>
-                    {
-                        req.Uri = link.Url;
-                        req.Qualities = link.Qualities;
-                        req.StreamType = link.CurrentType;
-                        ErrorText.Visibility = Visibility.Collapsed;
-                        PlayMedia(link.Url);
-                        try { if (mp != null && pos > 0) mp.Time = pos; } catch { }
-                    });
-                }
-                catch (Exception ex)
-                {
-                    Dispatcher.Invoke(() => ShowError("播放失败：" + ex.Message));
-                }
-            });
+            Diag.Log("player error, retry once at " + pos + "ms path=" + req.BaiduPath);
+            req.StartMs = pos;
+            started = false;
+            ErrorText.Visibility = Visibility.Collapsed;
+            PlayViaProxy();
             return;
         }
         ShowError("播放失败：无法打开该视频");
@@ -189,6 +206,8 @@ public partial class PlayerWindow : Window
     {
         ErrorText.Text = msg;
         ErrorText.Visibility = Visibility.Visible;
+        LoadingText.Visibility = Visibility.Collapsed;
+        userWantsPlay = false;
         PlayBtn.Content = "▶";
         ShowBars();
     }
@@ -199,6 +218,7 @@ public partial class PlayerWindow : Window
         try
         {
             long len = mp.Length, t = mp.Time;
+            lastTimeMs = t;
             if (!dragging && len > 0) SeekSlider.Value = t * 1000.0 / len;
             TimeText.Text = MainWindow.FormatTime(t / 1000) + " / " + MainWindow.FormatTime(len / 1000);
         }
@@ -245,10 +265,7 @@ public partial class PlayerWindow : Window
     void ResetHideTimer()
     {
         hideTimer.Stop();
-        if (mp != null)
-        {
-            try { if (mp.State == VLCState.Playing) { hideTimer.Start(); return; } } catch { }
-        }
+        if (mp != null && userWantsPlay) { hideTimer.Start(); return; }
         ShowBars();
     }
 
@@ -272,21 +289,53 @@ public partial class PlayerWindow : Window
 
     void Video_Click(object sender, MouseButtonEventArgs e)
     {
+        wpfClickAt = Environment.TickCount;
+        Overlay.Focus();
         if (e.ClickCount >= 2) { ToggleFullscreen(); return; }
-        PlayPause_Click(sender, e);
+        TogglePlayPause();
     }
 
-    void PlayPause_Click(object sender, RoutedEventArgs e)
+    // 视频原生窗口可能吞掉鼠标消息，轮询光标位置兜底"滑动显示进度条"
+    void InputTick(object sender, EventArgs e)
     {
-        if (mp == null) return;
-        try
+        if (!IsActive) return;
+        if (!GetCursorPos(out var p)) return;
+        Point local;
+        try { local = PointFromScreen(new Point(p.x, p.y)); } catch { return; }
+        if (local.X < 0 || local.Y < 0 || local.X > ActualWidth || local.Y > ActualHeight) return;
+        bool moved = double.IsNaN(lastPointer.X) ||
+            Math.Abs(local.X - lastPointer.X) > 1.5 || Math.Abs(local.Y - lastPointer.Y) > 1.5;
+        if (moved)
         {
-            if (mp.State == VLCState.Playing) mp.Pause();
-            else mp.Play();
+            lastPointer = local;
+            ShowBars();
+            ResetHideTimer();
         }
-        catch { }
-        ResetHideTimer();
+
+        bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        if (down && !lastButtonDown && pendingPressAt == 0 &&
+            local.Y > TopBar.ActualHeight && local.Y < ActualHeight - BottomBar.ActualHeight)
+            pendingPressAt = Environment.TickCount;
+        lastButtonDown = down;
+        if (pendingPressAt == 0) return;
+        if (Environment.TickCount - pendingPressAt < 160) return;
+        // WPF 自己收到过这次点击就不要重复触发
+        if (wpfClickAt < pendingPressAt) TogglePlayPause();
+        wpfClickAt = Environment.TickCount;
+        pendingPressAt = 0;
     }
+
+    const int VK_LBUTTON = 0x01;
+
+    struct POINT { public int x; public int y; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool GetCursorPos(out POINT p);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern short GetAsyncKeyState(int vKey);
+
+    void PlayPause_Click(object sender, RoutedEventArgs e) => TogglePlayPause();
 
     void Back_Click(object sender, RoutedEventArgs e) => Close();
 
@@ -424,20 +473,125 @@ public partial class PlayerWindow : Window
         }
     }
 
-    void OnKey(object sender, KeyEventArgs e)
+    protected override void OnKeyDown(KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && fullscreen) { ToggleFullscreen(); e.Handled = true; }
-        else if (e.Key == Key.Space) { PlayPause_Click(sender, e); e.Handled = true; }
-        else if (e.Key == Key.F) { ToggleFullscreen(); e.Handled = true; }
-        else if (e.Key == Key.Left) { Back10_Click(sender, e); e.Handled = true; }
-        else if (e.Key == Key.Right) { Fwd10_Click(sender, e); e.Handled = true; }
-        else if (e.Key == Key.Up && mp != null) { try { mp.Volume = Math.Min(200, mp.Volume + 10); VolumeSlider.Value = mp.Volume; } catch { } e.Handled = true; }
-        else if (e.Key == Key.Down && mp != null) { try { mp.Volume = Math.Max(0, mp.Volume - 10); VolumeSlider.Value = mp.Volume; } catch { } e.Handled = true; }
+        base.OnKeyDown(e);
+        // 钩子已处理过则跳过，避免双重触发；钩子不可用时这里兜底
+        if ((Environment.TickCount - hookHandledAt) < 300) { e.Handled = true; return; }
+        if (SpeedBox.IsDropDownOpen || QualityBox.IsDropDownOpen || AudioBox.IsDropDownOpen ||
+            SubtitleBox.IsDropDownOpen || AspectBox.IsDropDownOpen) return;
+        Overlay.Focus();
+        HandleKey(e.Key, e);
     }
+
+    void HandleKey(Key key, KeyEventArgs? e)
+    {
+        if (key == Key.Space) TogglePlayPause();
+        else if (key == Key.F) ToggleFullscreen();
+        else if (key == Key.Escape && fullscreen) ToggleFullscreen();
+        else if (key == Key.Left) { try { if (mp != null) mp.Time = Math.Max(0, mp.Time - 10000); } catch { } }
+        else if (key == Key.Right) { try { if (mp != null) mp.Time = mp.Time + 10000; } catch { } }
+        else if (key == Key.Up && mp != null) { try { mp.Volume = Math.Min(200, mp.Volume + 10); VolumeSlider.Value = mp.Volume; } catch { } }
+        else if (key == Key.Down && mp != null) { try { mp.Volume = Math.Max(0, mp.Volume - 10); VolumeSlider.Value = mp.Volume; } catch { } }
+        else return;
+        if (e != null) e.Handled = true;
+    }
+
+    void TogglePlayPause()
+    {
+        if (mp == null) return;
+        try
+        {
+            // libvlc 的 State 在 Pause() 后会短暂仍报 Playing，用它判断会导致"再按空格不恢复"
+            bool playing = userWantsPlay;
+            Diag.Log("toggle play/pause -> " + (playing ? "pause" : "resume"));
+            if (playing) { userWantsPlay = false; mp.Pause(); }
+            else { userWantsPlay = true; mp.Play(); }
+        }
+        catch (Exception ex) { Diag.Log("toggle failed: " + ex.Message); }
+        ResetHideTimer();
+    }
+
+    const int WH_KEYBOARD_LL = 13;
+    const int WM_KEYDOWN = 0x0100;
+    const int WM_SYSKEYDOWN = 0x0104;
+    static IntPtr kbdHook = IntPtr.Zero;
+    static AppLowLevelKeyboardProc? kbdProc;
+    static int kbdHookRefs;
+    int hookHandledAt = -10000;
+
+    static void InstallKeyboardHook()
+    {
+        lock (typeof(PlayerWindow))
+        {
+            kbdHookRefs++;
+            if (kbdHook != IntPtr.Zero) return;
+            try
+            {
+                kbdProc = HookCallback;
+                kbdHook = SetWindowsHookEx(WH_KEYBOARD_LL, kbdProc, IntPtr.Zero, 0);
+            }
+            catch (Exception ex) { Diag.Log("kbd hook failed: " + ex.Message); }
+        }
+    }
+
+    static void UninstallKeyboardHook()
+    {
+        lock (typeof(PlayerWindow))
+        {
+            if (kbdHookRefs > 0) kbdHookRefs--;
+            if (kbdHookRefs > 0 || kbdHook == IntPtr.Zero) return;
+            try { UnhookWindowsHookEx(kbdHook); } catch { }
+            kbdHook = IntPtr.Zero;
+            kbdProc = null;
+        }
+    }
+
+    static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        const int VK_SPACE = 0x20, VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
+        if (nCode >= 0)
+        {
+            var win = System.Windows.Application.Current?.Windows.OfType<PlayerWindow>().FirstOrDefault(w => w.IsActive);
+            int msg = (int)wParam;
+            if (win != null && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN))
+            {
+                int vk = System.Runtime.InteropServices.Marshal.ReadInt32(lParam);
+                Key key = vk switch
+                {
+                    VK_SPACE => Key.Space,
+                    VK_LEFT => Key.Left,
+                    VK_UP => Key.Up,
+                    VK_RIGHT => Key.Right,
+                    VK_DOWN => Key.Down,
+                    _ => Key.None,
+                };
+                if (key != Key.None)
+                {
+                    win.hookHandledAt = Environment.TickCount;
+                    win.Dispatcher.BeginInvoke(() => win.HandleKey(key, null));
+                    if (key == Key.Space) return IntPtr.Zero; // 吞掉，避免触发聚焦按钮
+                }
+            }
+        }
+        return CallNextHookEx(kbdHook, nCode, wParam, lParam);
+    }
+
+    delegate IntPtr AppLowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern IntPtr SetWindowsHookEx(int idHook, AppLowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
     void SaveRecord()
     {
-        if (mp == null) return;
+        if (mp == null || !RecordingEnabled) return;
         try
         {
             long len = mp.Length, t = mp.Time;
@@ -453,7 +607,8 @@ public partial class PlayerWindow : Window
     {
         try
         {
-            uiTimer.Stop(); hideTimer.Stop(); saveTimer.Stop();
+            UninstallKeyboardHook();
+            uiTimer.Stop(); hideTimer.Stop(); saveTimer.Stop(); inputTimer.Stop();
             SaveRecord();
             if (proxySession.Length > 0) HlsProxy.Release(proxySession);
             proxySession = "";

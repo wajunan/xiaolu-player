@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 
@@ -7,6 +6,7 @@ namespace XiaoluPlayer;
 public partial class NetdiskWindow : Window
 {
     string dir = "/";
+    bool videoMode;
     readonly Stack<string> history = new();
 
     public NetdiskWindow()
@@ -31,10 +31,10 @@ public partial class NetdiskWindow : Window
 
     void Back_Click(object sender, RoutedEventArgs e) => Close();
 
-    void OpenLogin_Click(object sender, RoutedEventArgs e)
+    void InAppLogin_Click(object sender, RoutedEventArgs e)
     {
-        try { Process.Start(new ProcessStartInfo("https://pan.baidu.com/") { UseShellExecute = true }); }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "小鹿播放增强器"); }
+        var w = new LoginWindow { Owner = this };
+        if (w.ShowDialog() == true) ShowBrowser();
     }
 
     void Login_Click(object sender, RoutedEventArgs e)
@@ -57,10 +57,27 @@ public partial class NetdiskWindow : Window
         ShowLogin();
     }
 
-    void Refresh_Click(object sender, RoutedEventArgs e) => LoadDir(dir);
+    void Refresh_Click(object sender, RoutedEventArgs e)
+    {
+        if (videoMode) LoadAllVideos();
+        else LoadDir(dir);
+    }
+
+    void CurrentDir_Click(object sender, RoutedEventArgs e)
+    {
+        videoMode = false;
+        LoadDir(dir);
+    }
+
+    void AllVideos_Click(object sender, RoutedEventArgs e)
+    {
+        videoMode = true;
+        LoadAllVideos();
+    }
 
     void LoadDir(string target)
     {
+        videoMode = false;
         StatusText.Text = "加载中…";
         Cursor = Cursors.Wait;
         string cookies = Store.Config.cookies;
@@ -69,6 +86,8 @@ public partial class NetdiskWindow : Window
             try
             {
                 var files = BaiduClient.List(cookies, target);
+                files.Sort((a, b) => a.IsDir != b.IsDir ? (a.IsDir ? -1 : 1)
+                    : BaiduClient.NaturalCompare(a.Name, b.Name));
                 Dispatcher.Invoke(() =>
                 {
                     dir = target;
@@ -87,7 +106,14 @@ public partial class NetdiskWindow : Window
                         });
                     }
                     FileList.ItemsSource = items;
-                    StatusText.Text = "";
+                    var names = cookies
+                        .Split(';', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(p => p.Trim().Split('=')[0])
+                        .Where(n => n is "BDUSS" or "STOKEN" or "BAIDUID" or "PANPSC" or "BDUSS_LG")
+                        .ToList();
+                    bool onlyFolders = items.Count > 0 && items.All(f => f.File != null && f.File.IsDir);
+                    string hint = target == "/" && onlyFolders ? " · 根目录只有文件夹，可点“全部视频”" : "";
+                    StatusText.Text = $"共 {items.Count} 项 · 会话Cookie: {(names.Count > 0 ? string.Join(", ", names) : "无(登录不完整)")}{hint} · 日志: {Diag.LogPath}";
                     Cursor = Cursors.Arrow;
                 });
             }
@@ -97,7 +123,64 @@ public partial class NetdiskWindow : Window
                 {
                     StatusText.Text = "";
                     Cursor = Cursors.Arrow;
-                    MessageBox.Show(this, "加载失败：\n" + ex.Message, "小鹿播放增强器");
+                    Diag.Log("list failed: " + ex.Message);
+                    MessageBox.Show(this, "加载失败：\n" + ex.Message + "\n\n诊断日志：" + Diag.LogPath, "小鹿播放增强器");
+                });
+            }
+        });
+    }
+
+    void LoadAllVideos()
+    {
+        videoMode = true;
+        StatusText.Text = "扫描全部视频中…";
+        Cursor = Cursors.Wait;
+        string cookies = Store.Config.cookies;
+        Task.Run(() =>
+        {
+            try
+            {
+                var res = BaiduClient.ListAllVideos(cookies, "/", 500, 2000, 50000, r =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        StatusText.Text = $"扫描中… 目录 {r.Scans}/500 · 文件 {r.FilesSeen} · 视频 {r.Videos.Count}";
+                    });
+                });
+                Dispatcher.Invoke(() =>
+                {
+                    PathText.Text = "全部视频";
+                    var items = new List<FileView>();
+                    foreach (var f in res.Videos)
+                    {
+                        items.Add(new FileView
+                        {
+                            File = f,
+                            Icon = "🎬",
+                            Name = f.Name,
+                            Sub = FormatBytes(f.Size),
+                            Badge = "▶"
+                        });
+                    }
+                    FileList.ItemsSource = items;
+                    var names = cookies
+                        .Split(';', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(p => p.Trim().Split('=')[0])
+                        .Where(n => n is "BDUSS" or "STOKEN" or "BAIDUID" or "PANPSC" or "BDUSS_LG")
+                        .ToList();
+                    string hint = res.Capped ? " · 已达扫描上限" : "";
+                    StatusText.Text = $"全部视频 {items.Count} 项 · 扫描目录 {res.Scans} · 子目录 {res.DirsFound}{hint} · 会话Cookie: {(names.Count > 0 ? string.Join(", ", names) : "无(登录不完整)")} · 日志: {Diag.LogPath}";
+                    Cursor = Cursors.Arrow;
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    StatusText.Text = "";
+                    Cursor = Cursors.Arrow;
+                    Diag.Log("all videos failed: " + ex.Message);
+                    MessageBox.Show(this, "扫描全部视频失败：\n" + ex.Message + "\n\n诊断日志：" + Diag.LogPath, "小鹿播放增强器");
                 });
             }
         });
@@ -123,7 +206,7 @@ public partial class NetdiskWindow : Window
         {
             try
             {
-                var link = BaiduClient.GetStreamLink(cookies, f.Path);
+                var link = BaiduClient.GetStreamLink(cookies, f.Path, f.FsId);
                 Dispatcher.Invoke(() =>
                 {
                     StatusText.Text = "";
@@ -173,9 +256,9 @@ public partial class NetdiskWindow : Window
 
 class FileView
 {
-    public PanFile? File;
-    public string Icon = "";
-    public string Name = "";
-    public string Sub = "";
-    public string Badge = "";
+    public PanFile? File { get; set; }
+    public string Icon { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Sub { get; set; } = "";
+    public string Badge { get; set; } = "";
 }

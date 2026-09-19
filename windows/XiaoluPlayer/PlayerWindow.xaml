@@ -8,7 +8,8 @@
     <Grid>
         <vlc:VideoView x:Name="VideoView" Background="Black">
             <vlc:VideoView.Content>
-                <Grid x:Name="Overlay" MouseMove="Overlay_MouseMove">
+                <Grid x:Name="Overlay" MouseMove="Overlay_MouseMove" Focusable="True"
+                      FocusManager.FocusedElement="{Binding ElementName=Overlay}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
@@ -58,7 +59,12 @@
                         </DockPanel>
                     </Border>
                     <Border Grid.Row="1" Background="Transparent"
-                            MouseLeftButtonDown="Video_Click"/>
+                            MouseLeftButtonDown="Video_Click">
+                        <TextBlock x:Name="LoadingText" Text="加载中…" Foreground="#E6FFFFFF"
+                                   FontSize="16" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" Visibility="Collapsed"
+                                   IsHitTestVisible="False"/>
+                    </Border>
                     <Border Grid.Row="2" x:Name="BottomBar" Padding="12,8">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">

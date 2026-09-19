@@ -53,4 +53,32 @@ object Format {
             else -> String.format(Locale.US, "%tF", epochMs)
         }
     }
+
+    /** 自然排序：数字按数值比较（"第2集" 在 "第10集" 前），忽略大小写。 */
+    fun naturalCompare(a: String, b: String): Int {
+        var i = 0
+        var j = 0
+        while (i < a.length && j < b.length) {
+            val ca = a[i]
+            val cb = b[j]
+            if (ca in '0'..'9' && cb in '0'..'9') {
+                val si = i
+                val sj = j
+                while (i < a.length && a[i] in '0'..'9') i++
+                while (j < b.length && b[j] in '0'..'9') j++
+                val na = a.substring(si, i).trimStart('0')
+                val nb = b.substring(sj, j).trimStart('0')
+                if (na.length != nb.length) return na.length - nb.length
+                val c = na.compareTo(nb)
+                if (c != 0) return c
+                continue
+            }
+            val la = ca.lowercaseChar()
+            val lb = cb.lowercaseChar()
+            if (la != lb) return la.code - lb.code
+            i++
+            j++
+        }
+        return (a.length - i) - (b.length - j)
+    }
 }

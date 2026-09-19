@@ -19,6 +19,12 @@
                        Margin="10,0,0,0" Foreground="{StaticResource BrandDeepBrush}"
                        VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
+                <Button Content="当前目录" Click="CurrentDir_Click" Background="Transparent"
+                        BorderThickness="0" FontSize="13" Cursor="Hand" Padding="6,2"
+                        Foreground="{StaticResource BrandDeepBrush}"/>
+                <Button Content="全部视频" Click="AllVideos_Click" Background="Transparent"
+                        BorderThickness="0" FontSize="13" Cursor="Hand" Padding="6,2"
+                        Foreground="{StaticResource BrandDeepBrush}"/>
                 <Button Content="🔄" Click="Refresh_Click" Background="Transparent"
                         BorderThickness="0" FontSize="15" Cursor="Hand" Padding="6,2"
                         ToolTip="刷新"/>
@@ -39,17 +45,23 @@
                 <TextBlock Text="登录百度网盘后，可在线播放你自己有权限的视频"
                            FontSize="13" Foreground="{StaticResource InkSoftBrush}"
                            TextAlignment="Center" Margin="0,16,0,0" TextWrapping="Wrap"/>
-                <TextBlock Text="在浏览器登录 pan.baidu.com，按 F12 打开开发者工具，从请求头复制 Cookie 粘贴到下面："
+                <TextBlock Text="点击下方按钮，在应用内打开百度官方登录页完成登录（支持扫码等百度官方方式）。账号密码只经过百度官方页面，本应用只保存登录后的会话。"
                            FontSize="12" Foreground="{StaticResource InkSoftBrush}"
                            TextAlignment="Center" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                <TextBox x:Name="CookieBox" Height="90" Margin="0,12,0,0" TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto" AcceptsReturn="True"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
-                    <Button Content="打开百度登录页" Width="140" Margin="0,0,10,0"
-                            Click="OpenLogin_Click"/>
-                    <Button Content="保存并登录" Width="140" Style="{StaticResource PrimaryButton}"
-                            Click="Login_Click"/>
-                </StackPanel>
+                <Button Content="应用内登录" Width="220" HorizontalAlignment="Center" Margin="0,14,0,0"
+                        Style="{StaticResource PrimaryButton}" Click="InAppLogin_Click"/>
+                <Expander Header="手动粘贴 Cookie（备用方式）" Margin="0,16,0,0" FontSize="12"
+                          Foreground="{StaticResource InkSoftBrush}">
+                    <StackPanel>
+                        <TextBlock Text="备用方式：在系统浏览器登录 pan.baidu.com，按 F12 打开开发者工具，从请求头复制 Cookie 粘贴到下面："
+                                   FontSize="12" Foreground="{StaticResource InkSoftBrush}"
+                                   TextWrapping="Wrap"/>
+                        <TextBox x:Name="CookieBox" Height="90" Margin="0,8,0,0" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" AcceptsReturn="True"/>
+                        <Button Content="保存并登录" Width="140" HorizontalAlignment="Center" Margin="0,12,0,0"
+                                Style="{StaticResource PrimaryButton}" Click="Login_Click"/>
+                    </StackPanel>
+                </Expander>
             </StackPanel>
 
             <Grid x:Name="BrowserPanel">
